@@ -4,68 +4,82 @@ import javazoom.jlgui.basicplayer.BasicPlayer;
 import javazoom.jlgui.basicplayer.BasicPlayerException;
 
 import java.io.File;
+import java.util.Objects;
 
+/** BasicPlayer adapter with file selection, seek, and a stable 0–100 volume scale. */
 public class MediaPlayer extends BasicPlayer {
-    private final int MAX_VOLUME_RATIO = 10;
+    private volatile File currentTrack;
+    private volatile int volumePercent = 70;
 
-    @Override
-    public void play() {
-        try {
-            String music1 = "25 Gunther - Ding Dong Song.mp3";
-            // todo: MP-123 добавить название песни как аргумент
-            open(new File(music1));
-            super.play();
-        } catch (BasicPlayerException b) {
-            b.printStackTrace();
+    public synchronized void play(File track) throws BasicPlayerException {
+        Objects.requireNonNull(track, "track");
+        if (!track.isFile()) {
+            throw new IllegalArgumentException("Audio file does not exist: " + track);
         }
+
+        stop();
+        currentTrack = null;
+        open(track);
+        currentTrack = track;
+        setGain(volumePercent / 100.0);
+        super.play();
     }
 
     @Override
-    public void pause() {
+    public synchronized void stop() throws BasicPlayerException {
+        super.stop();
+        Thread playbackThread = m_thread;
+        if (playbackThread == null || playbackThread == Thread.currentThread() || !playbackThread.isAlive()) {
+            return;
+        }
         try {
-            super.pause();
-        } catch (BasicPlayerException e) {
-            e.printStackTrace();
+            playbackThread.join(1_000);
+            if (playbackThread.isAlive()) {
+                playbackThread.interrupt();
+                playbackThread.join(250);
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new BasicPlayerException(BasicPlayerException.WAITERROR, exception);
+        }
+        if (playbackThread.isAlive()) {
+            throw new BasicPlayerException(BasicPlayerException.WAITERROR);
         }
     }
 
-    public void pauseOrResume() {
+    public void pauseOrResume() throws BasicPlayerException {
         if (getStatus() == PAUSED) {
             resume();
-        } else {
+        } else if (getStatus() == PLAYING) {
             pause();
+        } else if (currentTrack != null) {
+            play(currentTrack);
         }
     }
 
-    @Override
-    public void stop() {
-        try {
-            super.stop();
-        } catch (BasicPlayerException e) {
-            e.printStackTrace();
+    public void setVolumePercent(int value) throws BasicPlayerException {
+        volumePercent = Math.max(0, Math.min(100, value));
+        int status = getStatus();
+        if (status == OPENED || status == PLAYING || status == PAUSED) {
+            setGain(volumePercent / 100.0);
         }
     }
 
-    @Override
-    public void resume() {
-        try {
-            super.resume();
-        } catch (BasicPlayerException e) {
-            e.printStackTrace();
+    public int getVolumePercent() {
+        return volumePercent;
+    }
+
+    public File getCurrentTrack() {
+        return currentTrack;
+    }
+
+    /** Seeks to a fraction of the encoded file; BasicPlayer's seek API uses bytes. */
+    public void seekToFraction(double fraction) throws BasicPlayerException {
+        File track = currentTrack;
+        if (track == null || track.length() == 0) {
+            return;
         }
-    }
-
-    public void setVolume(int volume) throws BasicPlayerException {
-        setGain(volume / 100.0);
-    }
-
-    @Override
-    public float getMaximumGain() {
-        return super.getMaximumGain() * MAX_VOLUME_RATIO;
-    }
-
-    public int getSongLength()
-    {
-        return m_audioFileFormat.getFrameLength();
+        double clampedFraction = Math.max(0.0, Math.min(1.0, fraction));
+        seek(Math.round(track.length() * clampedFraction));
     }
 }

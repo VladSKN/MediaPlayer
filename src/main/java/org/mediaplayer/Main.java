@@ -3,24 +3,14 @@ package org.mediaplayer;
 import org.mediaplayer.core.MediaPlayer;
 import org.mediaplayer.view.MediaPlayerView;
 
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import javax.swing.SwingUtilities;
 
 public class Main {
     public static void main(String[] args) {
-        MediaPlayer mediaPlayer = new MediaPlayer();
-
-        MediaPlayerView dialog = new MediaPlayerView(mediaPlayer);
-
-        dialog.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                mediaPlayer.stop();
-                dialog.dispose();
-            }
+        SwingUtilities.invokeLater(() -> {
+            MediaPlayer mediaPlayer = new MediaPlayer();
+            MediaPlayerView window = new MediaPlayerView(mediaPlayer);
+            window.setVisible(true);
         });
-
-        dialog.pack();
-        dialog.setVisible(true);
     }
 }

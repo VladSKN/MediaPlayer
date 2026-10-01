@@ -1,79 +1,67 @@
 package org.mediaplayer.listener;
 
 import javazoom.jlgui.basicplayer.BasicController;
-import javazoom.jlgui.basicplayer.BasicPlayer;
 import javazoom.jlgui.basicplayer.BasicPlayerEvent;
 import javazoom.jlgui.basicplayer.BasicPlayerListener;
-import org.mediaplayer.model.SongTimeModel;
+import org.mediaplayer.model.TrackTimeFormatter;
 
-import javax.swing.*;
-import java.time.Duration;
-import java.time.temporal.ChronoUnit;
+import javax.swing.JLabel;
+import javax.swing.JSlider;
+import javax.swing.SwingUtilities;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.function.IntConsumer;
 
-
+/** Bridges BasicPlayer's playback thread to Swing controls on the EDT. */
 public class BasicPlayerSimpleListener implements BasicPlayerListener {
-    private final JProgressBar progressBar;
+    private static final int SLIDER_MAXIMUM = 1_000;
 
+    private final JSlider positionSlider;
     private final JLabel songTimeLabel;
+    private final IntConsumer sliderPositionUpdater;
+    private volatile long durationMicros;
 
-
-    public BasicPlayerSimpleListener(JProgressBar progressBar, JLabel songTimeLabel) {
-        this.progressBar = progressBar;
+    public BasicPlayerSimpleListener(JSlider positionSlider, JLabel songTimeLabel, IntConsumer sliderPositionUpdater) {
+        this.positionSlider = positionSlider;
         this.songTimeLabel = songTimeLabel;
+        this.sliderPositionUpdater = sliderPositionUpdater;
     }
 
     @Override
-    public void opened(Object o, Map map) {
-        String k = map.get("audio.length.frames").toString();
-
-        long songInMicroSeconds = (long) map.get("duration");
-        long minutes = TimeUnit.MICROSECONDS.toMinutes(songInMicroSeconds);
-        long seconds = TimeUnit.MICROSECONDS.toSeconds(songInMicroSeconds) - TimeUnit.MINUTES.toSeconds(minutes);
-
-        SongTimeModel.getInstance().setTotalSeconds((int) seconds);
-        SongTimeModel.getInstance().setTotalMinutes((int) minutes);
-
-        drawCurrentTime();
-    }
-
-    private void drawCurrentTime() {
-        SongTimeModel model = SongTimeModel.getInstance();
-        songTimeLabel.setText(String.format("%02d:%02d/%02d:%02d",
-                model.getPassedMinutes(), model.getPassedSeconds(), model.getTotalMinutes(), model.getTotalSeconds()));
+    public void opened(Object source, Map properties) {
+        Object duration = properties == null ? null : properties.get("duration");
+        durationMicros = duration instanceof Number ? Math.max(0, ((Number) duration).longValue()) : 0;
+        long total = durationMicros;
+        SwingUtilities.invokeLater(() -> {
+            sliderPositionUpdater.accept(0);
+            positionSlider.setEnabled(total > 0);
+            songTimeLabel.setText(TrackTimeFormatter.formatMicros(0) + "/"
+                    + TrackTimeFormatter.formatMicros(total));
+        });
     }
 
     @Override
-    public void progress(int arg0, long arg1, byte[] arg2, Map map) {
-//        String s = map.get("mp3.frame").toString();
-
-        long songInMicroSeconds = (long) map.get("mp3.position.microseconds");
-        long minutes = TimeUnit.MICROSECONDS.toMinutes(songInMicroSeconds);
-        long seconds = TimeUnit.MICROSECONDS.toSeconds(songInMicroSeconds) - TimeUnit.MINUTES.toSeconds(minutes);
-
-//        int p = 0;
-//        int k = (p - Integer.parseInt(s) * -1);
-
-        long passedSeconds = seconds + TimeUnit.MINUTES.toSeconds(minutes);
-        long totalSeconds = SongTimeModel.getInstance().getTotalSeconds()
-                + TimeUnit.MINUTES.toSeconds(SongTimeModel.getInstance().getTotalMinutes());
-
-        progressBar.setValue((int) ((passedSeconds * 1.0 / totalSeconds) * 100));
-
-        SongTimeModel.getInstance().setPassedSeconds((int) seconds);
-        SongTimeModel.getInstance().setPassedMinutes((int) minutes);
-
-        drawCurrentTime();
+    public void progress(int bytesRead, long microseconds, byte[] pcmData, Map properties) {
+        long position = Math.max(0, microseconds);
+        long duration = durationMicros;
+        int sliderValue = duration > 0
+                ? (int) Math.min(SLIDER_MAXIMUM, Math.round(position * (double) SLIDER_MAXIMUM / duration))
+                : 0;
+        SwingUtilities.invokeLater(() -> {
+            if (!positionSlider.getValueIsAdjusting()) {
+                sliderPositionUpdater.accept(sliderValue);
+            }
+            songTimeLabel.setText(TrackTimeFormatter.formatMicros(position) + "/"
+                    + TrackTimeFormatter.formatMicros(duration));
+        });
     }
 
     @Override
-    public void stateUpdated(BasicPlayerEvent basicPlayerEvent) {
+    public void stateUpdated(BasicPlayerEvent event) {
+        // Playback state is controlled by the view; no component work is needed here.
     }
 
     @Override
-    public void setController(BasicController basicController) {
+    public void setController(BasicController controller) {
+        // BasicPlayer calls this during listener registration.
     }
 }
-
-
